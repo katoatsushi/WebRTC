@@ -1,14 +1,5 @@
 import React from 'react';
-import {
-  Button,
-  Grid,
-  Dialog,
-  IconButton,
-  DialogTitle,
-  DialogContent,
-  DialogContentText,
-  DialogActions,
-} from '@material-ui/core';
+import {  Button, Grid, Dialog, IconButton, DialogTitle, DialogContent, DialogContentText, DialogActions,} from '@material-ui/core';
 import CloseIcon from '@material-ui/icons/Close';
 import io from 'socket.io-client';
 import Like from './Like';
@@ -36,13 +27,10 @@ class MultVideoChat extends React.Component {
     this.onOffer = this.onOffer.bind(this);
     this.onAnswer = this.onAnswer.bind(this);
     this.onAddStream = this.onAddStream.bind(this);
-    this.onRemoveStream = this.onRemoveStream.bind(this);
-    this.onIceCandidate = this.onIceCandidate.bind(this);
     this.makeOffer = this.makeOffer.bind(this);
     this.makeAnswer = this.makeAnswer.bind(this);
     this.sendCall = this.sendCall.bind(this);
     this.sendSdp = this.sendSdp.bind(this);
-    this.sendIceCandidate = this.sendIceCandidate.bind(this);
     this.onDisconnect = this.onDisconnect.bind(this);
     this.onVideoStart = this.onVideoStart.bind(this);
     this.onCaptureStart = this.onCaptureStart.bind(this);
@@ -59,6 +47,7 @@ class MultVideoChat extends React.Component {
     this.socket = io('localhost:9090');
     this.socket.on('RECEIVE_CONNECTED', data => {
       console.log('socket.io connected. id=' + data.id);
+      // サーバーから受け取ったidをstateに保存
       this.setState({ socketId: data.id });
       this.socket.emit('SEND_ENTER', this.state.room);
     });
@@ -104,17 +93,18 @@ class MultVideoChat extends React.Component {
   }
 
   async onReceiveCall(data) {
+    // data.idはサーバーから受け取ったsocketのid
     console.log('receive call. from:' + data.id);
     await this.makeOffer(data.id);
   }
 
   onReceiveCandidate(ice) {
-    console.log('receive candidate:' + ice.id);
+    console.log('receive candidate:', {ice});
     const peer = this.state.peers[ice.id];
     if (!peer) return;
 
     const candidate = new RTCIceCandidate(ice);
-    console.log(candidate);
+    console.log("candidate", {candidate});
     peer.addIceCandidate(candidate);
   }
 
@@ -133,7 +123,7 @@ class MultVideoChat extends React.Component {
     stream.getTracks().forEach(track => {
       this.senders[sdp.id].push(peer.addTrack(track, stream));
     });
-    console.log(peer);
+    console.log("peer create!!", {peer});
     if (!this.state.peers[sdp.id]) {
       console.log('add peer :' + sdp.id);
       this.state.peers[sdp.id] = peer;
@@ -141,7 +131,9 @@ class MultVideoChat extends React.Component {
     }
 
     const offer = new RTCSessionDescription(sdp);
+    console.log("オファーを作成しました", {offer}, {peer})
     await peer.setRemoteDescription(offer);
+    console.log("オファーをリモートに保存しました", {peer})
     this.makeAnswer(sdp.id);
   }
 
@@ -156,8 +148,8 @@ class MultVideoChat extends React.Component {
   async onAddStream(id, stream) {
     console.log('onAddStream:' + id + ', stream.id:' + stream.id);
     const video = this.videos[id];
-    console.log(id);
-    console.log(video);
+    console.log("id", {id});
+    console.log("video", {video});
     try {
       if (video) {
         video.pause();
@@ -169,29 +161,16 @@ class MultVideoChat extends React.Component {
     }
   }
 
-  onRemoveStream(id) {
-    console.log('onRemoveStream:' + id);
-  }
-
-  onIceCandidate(id, icecandidate) {
-    console.log('onIceCandidate:' + id);
-    if (icecandidate) {
-      // Trickle ICE
-      this.sendIceCandidate(id, icecandidate);
-    } else {
-      // Vanilla ICE
-      console.log('empty ice event');
-    }
-  }
-
   async makeOffer(id) {
+    // idはサーバーから受け取ったsocketのid
     const peer = this.state.peers[id] || this.prepareNewConnection(id);
-    console.log(peer);
+    console.log('オファーを作成します:peer', {peer});
     if (this.senders[id]) {
       this.senders[id].forEach(sender => {
         peer.removeTrack(sender);
       });
     }
+
     this.senders[id] = [];
     const canvas = document.createElement('canvas');
     const stream = this.video.srcObject || canvas.captureStream(10);
@@ -202,7 +181,6 @@ class MultVideoChat extends React.Component {
       this.state.peers[id] = peer;
       await this.setState({ peers: this.state.peers });
     }
-
     const offer = await peer.createOffer();
     await peer.setLocalDescription(offer);
     this.sendSdp(id, peer.localDescription);
@@ -210,9 +188,17 @@ class MultVideoChat extends React.Component {
 
   async makeAnswer(id) {
     const peer = this.state.peers[id];
+    console.log("アンサー", {peer})
     const answer = await peer.createAnswer();
+    console.log("アンサー作成後", {peer})
     await peer.setLocalDescription(answer);
+    console.log("アンサーローカル説明記述後", {peer})
     this.sendSdp(id, peer.localDescription);
+  }
+
+  sendSdp(id, sdp) {
+    console.log('SDPをサーバーに送信中...:idとpeerのlocalDescription' + sdp.type + ', to:' + id, {sdp});
+    this.socket.emit('SEND_SDP', { target: id, sdp: sdp });
   }
 
   sendCall() {
@@ -224,41 +210,40 @@ class MultVideoChat extends React.Component {
     this.socket.emit('SEND_CALL');
   }
 
-  sendIceCandidate(id, iceCandidate) {
-    if (!this.state.peers[id]) return;
-    console.log('sending CANDIDATE=' + iceCandidate);
-    this.socket.emit('SEND_CANDIDATE', { target: id, ice: iceCandidate });
-  }
-
-  sendSdp(id, sdp) {
-    console.log('sending SDP:' + sdp.type + ', to:' + id);
-    this.socket.emit('SEND_SDP', { target: id, sdp: sdp });
-  }
-
   prepareNewConnection(id) {
+    // id = サーバーから受け取ったsocketのid
     console.log('establish connection to:' + id);
     const config = { iceServers: [] };
     const peer = new RTCPeerConnection(config);
+    console.log("peer making .....", {peer})
     peer.ontrack = event => {
+      console.log('ontrack:', {event});
       this.onAddStream(id, event.streams[0]);
     };
     peer.onremovestream = event => {
-      this.onRemoveStream(id);
+      console.log('onRemoveStream:', {event});
     };
     peer.onicecandidate = event => {
-      this.onIceCandidate(id, event.candidate);
+        const iceCandidate = event.candidate
+        console.log('onIceCandidate:', {event});
+        if (iceCandidate) {
+          // ICEを送る
+          if (!this.state.peers[id]) return;
+          this.socket.emit('SEND_CANDIDATE', { target: id, ice: iceCandidate });
+          console.log("サーバーにICEを送りました")
+        } else { console.log('empty ice event'); }
     };
     peer.oniceconnectionstatechange = event => {
       if (peer.iceConnectionState === 'disconnected') {
-        console.log('state disconnected to: ' + id);
+        console.log('disconnected:', {event});
         this.onDisconnect(id);
       }
     };
     peer.onnegotiationneeded = event => {
-      console.log('onnegotiationneeded');
+      console.log('on negotiation needed',{event});
     };
     peer.onconnectionstatechange = event => {
-      console.log('onconnectionstatechange: ' + peer.connectionState);
+      console.log('on connection state change: ',{event});
     };
 
     return peer;
